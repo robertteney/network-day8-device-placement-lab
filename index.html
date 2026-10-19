@@ -412,7 +412,7 @@
       <li>All incoming Internet traffic must pass through inspection before entering internal subnets.</li>
       <li>Desktop workstations in Building A must not see unicast frames intended for other devices (switched segmentation). Port Security & VLAN 10 must be enforced.</li>
       <li>Building B relies on an encrypted <strong>2.4 GHz wireless bridge connection</strong> utilizing standard non-overlapping channels (Channels 1, 6, 11).</li>
-      <li>All wireless connectivity must enforce <strong>WPA2 - Enterprise</strong> authentication.</li>
+      <li>All wireless connectivity must enforce <strong>WPA2 - Enterprise (802.1X/RADIUS)</strong> authentication. Configure both wireless devices for RADIUS server <strong>192.168.0.10</strong>, UDP port <strong>1812</strong>, and the lab's shared secret <strong>RadiusDemo2026!</strong>.</li>
     </ul>
 
     <div class="rule-box">
@@ -734,9 +734,18 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Key or Passphrase</label>
-          <input type="text" id="wap-passphrase" value="S3cretkey!" disabled />
+          <label>RADIUS Authentication Server IP</label>
+          <input type="text" id="wap-radius-ip" value="" placeholder="e.g. 192.168.0.10" />
         </div>
+        <div class="form-group">
+          <label>RADIUS Authentication Port</label>
+          <input type="text" id="wap-radius-port" value="" placeholder="e.g. 1812" />
+        </div>
+        <div class="form-group">
+          <label>RADIUS Shared Secret (AP ↔ RADIUS server)</label>
+          <input type="text" id="wap-radius-secret" value="" placeholder="Enter the configured RADIUS secret" />
+        </div>
+        <p style="font-size:0.78rem;color:var(--muted);line-height:1.45">WPA2-Enterprise authenticates clients through 802.1X/RADIUS. This shared secret authenticates the network device to the RADIUS server; it is not a Wi-Fi password for employees.</p>
       </div>
 
       <div class="modal-footer">
@@ -826,9 +835,18 @@
           </select>
         </div>
         <div class="form-group">
-          <label>Key or Passphrase</label>
-          <input type="text" id="ext-passphrase" value="" />
+          <label>RADIUS Authentication Server IP</label>
+          <input type="text" id="ext-radius-ip" value="" placeholder="e.g. 192.168.0.10" />
         </div>
+        <div class="form-group">
+          <label>RADIUS Authentication Port</label>
+          <input type="text" id="ext-radius-port" value="" placeholder="e.g. 1812" />
+        </div>
+        <div class="form-group">
+          <label>RADIUS Shared Secret (AP ↔ RADIUS server)</label>
+          <input type="text" id="ext-radius-secret" value="" placeholder="Enter the configured RADIUS secret" />
+        </div>
+        <p style="font-size:0.78rem;color:var(--muted);line-height:1.45">WPA2-Enterprise authenticates clients through 802.1X/RADIUS. This shared secret authenticates the network device to the RADIUS server; it is not a Wi-Fi password for employees.</p>
       </div>
 
       <div class="modal-footer">
@@ -852,15 +870,6 @@
   <script>
     const inventoryList = ["Hub", "Switch", "WAP", "Firewall", "Router", "Wireless range extender"];
     let activeDragName = null;
-
-    function generateRandomPassphrase() {
-      const charPool = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*";
-      let key = "";
-      for (let i = 0; i < 10; i++) {
-        key += charPool.charAt(Math.floor(Math.random() * charPool.length));
-      }
-      return key;
-    }
 
     function shuffle(array) {
       for (let i = array.length - 1; i > 0; i--) {
@@ -1017,7 +1026,11 @@
         slot.innerHTML = `Zone ${slot.getAttribute('data-slot')}`;
       });
 
-      document.getElementById('ext-passphrase').value = generateRandomPassphrase();
+      ['wap','ext'].forEach(prefix => {
+        document.getElementById(prefix+'-radius-ip').value = '';
+        document.getElementById(prefix+'-radius-port').value = '';
+        document.getElementById(prefix+'-radius-secret').value = '';
+      });
 
       shuffleModalDropdowns();
       renderInventory();
@@ -1025,7 +1038,7 @@
 
     function evaluateTopology() {
       let score = 0;
-      const totalPoints = 15; // Increased score total to account for Switch configuration
+      const totalPoints = 20; // Original 15 checks: replace 1 passphrase point with 6 RADIUS checks
       let logs = [];
 
       // 1. Evaluate Placements (5 Pts)
@@ -1067,11 +1080,13 @@
       if (wapSec === 'WPA2-Enterprise') score++;
       else logs.push(`<div class="explanation-item"><strong>WAP Security:</strong> Security Settings must be set to WPA2 - Enterprise.</div>`);
 
-      // 4. Evaluate Extender Settings & Passphrase (3 Pts)
+      // 4. Evaluate Extender Settings (2 Pts) and both RADIUS configurations (6 Pts)
       const extMode = document.getElementById('ext-mode').value;
       const extChannel = document.getElementById('ext-channel').value;
       const extSec = document.getElementById('ext-security').value;
-      const extPass = document.getElementById('ext-passphrase').value.trim();
+      const radiusIP = '192.168.0.10';
+      const radiusPort = '1812';
+      const radiusSecret = 'RadiusDemo2026!';
 
       if (extMode === wapMode && extChannel === wapChannel) score++;
       else logs.push(`<div class="explanation-item"><strong>Bridge Alignment:</strong> Extender Mode and Channel (Channel ${wapChannel}) must match the WAP settings.</div>`);
@@ -1079,8 +1094,19 @@
       if (extSec === 'WPA2-Enterprise') score++;
       else logs.push(`<div class="explanation-item"><strong>Bridge Security:</strong> Extender Security Settings must match WPA2 - Enterprise.</div>`);
 
-      if (extPass === 'S3cretkey!') score++;
-      else logs.push(`<div class="explanation-item"><strong>Passphrase Mismatch:</strong> Extender Passphrase must manually be updated to match the WAP passphrase (<code>S3cretkey!</code>).</div>`);
+      // WPA2-Enterprise RADIUS server details (5 points: WAP IP, port, secret; extender IP, port, secret grouped into 2 checks)
+      for (const prefix of ['wap','ext']) {
+        const label = prefix === 'wap' ? 'WAP' : 'Extender';
+        const ip = document.getElementById(prefix+'-radius-ip').value.trim();
+        const port = document.getElementById(prefix+'-radius-port').value.trim();
+        const secret = document.getElementById(prefix+'-radius-secret').value;
+        if (ip === radiusIP) score++;
+        else logs.push(`<div class="explanation-item"><strong>${label} RADIUS:</strong> Server IP should be <code>${radiusIP}</code>.</div>`);
+        if (port === radiusPort) score++;
+        else logs.push(`<div class="explanation-item"><strong>${label} RADIUS:</strong> Authentication port should be <code>${radiusPort}</code> (UDP).</div>`);
+        if (secret === radiusSecret) score++;
+        else logs.push(`<div class="explanation-item"><strong>${label} RADIUS:</strong> Shared secret must match the configured RADIUS server secret.</div>`);
+      }
 
       // 5. Evaluate Firewall Rules (3 Pts)
       const fw0 = document.getElementById('fw-0').value; // DNS
@@ -1104,7 +1130,7 @@
       scoreHeader.style.color = score === totalPoints ? 'var(--success)' : 'var(--danger)';
 
       if (score === totalPoints && !hubInUse) {
-        evalLog.innerHTML = `<p style="color:var(--success); font-weight:bold;">Perfect Solution! All placements, switch port security parameters, firewall security policies, matching wireless credentials, and non-overlapping channel bridge settings meet technical specifications.</p>`;
+        evalLog.innerHTML = `<p style="color:var(--success); font-weight:bold;">Perfect Solution! All placements, switch port security parameters, firewall security policies, 802.1X/RADIUS authentication settings, and wireless bridge channel alignment meet technical specifications.</p>`;
       } else {
         evalLog.innerHTML = logs.join('');
       }
@@ -1116,7 +1142,11 @@
       renderInventory();
       initDropzones();
       shuffleModalDropdowns();
-      document.getElementById('ext-passphrase').value = generateRandomPassphrase();
+      ['wap','ext'].forEach(prefix => {
+        document.getElementById(prefix+'-radius-ip').value = '';
+        document.getElementById(prefix+'-radius-port').value = '';
+        document.getElementById(prefix+'-radius-secret').value = '';
+      });
     };
   </script>
 </body>
